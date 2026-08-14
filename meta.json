@@ -1,0 +1,26 @@
+{
+ "minZoom": 6,
+ "maxZoom": 12,
+ "bounds": [
+  [
+   48.3,
+   -128.5
+  ],
+  [
+   51.1,
+   -123.2
+  ]
+ ],
+ "year": 2024,
+ "tag": "v2",
+ "build": "12d45f45",
+ "post": "",
+ "positives": [
+  "forest",
+  "wetland",
+  "water"
+ ],
+ "negatives": [
+  "built"
+ ]
+}

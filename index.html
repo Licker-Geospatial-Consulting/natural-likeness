@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nature-likeness: Vancouver Island, 2024</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  /* Two themes, because a dark panel on a white hillshade reads as a hole in
+     the page. The basemap picks the theme unless the reader overrides it. */
+  :root, .theme-dark {
+    --bg: #12161a; --panel: #141a1f; --line: #333b44;
+    --text: #e8eaec; --muted: #98a1a8; --accent: #d7dce0;
+    --ctl: #1b2026; --thumb: #f4f6f7; --thumbline: #0a0d10;
+    --cut: rgba(8,11,14,.74); --shadow: 0 2px 10px rgba(0,0,0,.45); --panelOn: #12161a;
+  }
+  .theme-light {
+    --bg: #eef0f1; --panel: #fbfbfa; --line: #c9cfd4;
+    --text: #1a1f24; --muted: #5c666e; --accent: #2a3138;
+    --ctl: #fff; --thumb: #ffffff; --thumbline: #2a3138;
+    --cut: rgba(246,247,248,.80); --shadow: 0 2px 10px rgba(0,0,0,.16); --panelOn: #fff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color: var(--text); transition: background .2s; }
+  #map { position: absolute; inset: 0; background: var(--bg); }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px;
+           padding: 11px 13px; box-shadow: var(--shadow); }
+  h1 { margin: 0 0 3px; font-size: 14px; }
+  #title { position: absolute; top: 12px; left: 12px; z-index: 1000;
+           max-width: min(360px, calc(100vw - 24px)); }
+  #title p { margin: 0; font-size: 11.5px; color: var(--muted); }
+  #title a { color: var(--accent); }
+
+  .chiprow { display: flex; align-items: center; gap: 9px; margin-top: 9px; }
+  .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+  .chips button {
+    font: inherit; font-size: 10.5px; padding: 2px 7px; cursor: pointer; border-radius: 4px;
+    background: var(--ctl); color: var(--muted); border: 1px solid var(--line); }
+  .chips button:hover { border-color: var(--accent); color: var(--accent); }
+  .chips button.on { background: var(--accent); border-color: var(--accent); color: var(--panelOn); font-weight: 600; }
+  .places { margin-top: 7px; }
+  #opacity { flex: 1; min-width: 60px; accent-color: var(--accent); }
+  input[type=range] { width: 100%; }
+
+  #legend { position: absolute; bottom: 20px; left: 12px; z-index: 1000; width: 300px; }
+
+  /* The ramp is the slider track: both thumbs sit on the gradient, clamped
+     against each other so they cannot cross. */
+  #plotwrap { position: relative; }
+  #dist { display: block; width: 100%; height: 34px; margin-bottom: 3px; }
+  #rampwrap { position: relative; height: 26px; }
+  #ramp { position: absolute; inset: 0; width: 100%; height: 26px;
+          border-radius: 3px; border: 1px solid var(--line); }
+  /* The cut shading spans the distribution as well as the ramp, so the filter
+     visibly removes area rather than just recolouring a bar. */
+  .cut { position: absolute; top: 0; bottom: 0; background: var(--cut);
+         pointer-events: none; z-index: 1; }
+  #caption { font-size: 10px; color: var(--muted); margin-top: 6px; line-height: 1.35; }
+  .ico { font-size: 12px; color: var(--muted); }
+  #opacity { flex: 0 0 84px; }
+  .foot { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--line);
+          display: flex; align-items: center; gap: 9px; }
+  .foot + .foot { margin-top: 8px; padding-top: 0; border-top: 0; }
+  .flab { font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+          color: var(--muted); white-space: nowrap; }
+  /* One control, several states: a segmented group reads as a choice,
+     where separate bordered chips read as independent actions. */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px;
+         overflow: hidden; }
+  .seg button { font: inherit; font-size: 11px; padding: 3px 11px; cursor: pointer;
+                background: var(--ctl); color: var(--muted); border: 0;
+                border-right: 1px solid var(--line); }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--accent); color: var(--panelOn); font-weight: 600; }
+  #parktoggle button { min-width: 34px; }
+  .seg button:not(.on):hover { color: var(--text); }
+  #brand { display: block; margin-top: 9px; opacity: .75; }
+  #brand:hover { opacity: 1; }
+  #brand img { width: 74px; height: auto; display: block; }
+  .theme-dark #brand img { filter: grayscale(1) brightness(0) invert(1); opacity: .85; }
+  #osm { font-size: 10.5px; color: var(--muted); text-decoration: underline; }
+  #osm:hover { color: var(--text); }
+  #about { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
+           font-size: 11px; color: var(--muted); max-height: 46vh; overflow-y: auto; }
+  #about p { margin: 0 0 7px; }
+  #about code { font-size: 10px; background: var(--ctl); padding: 1px 3px; border-radius: 2px;
+                display: inline-block; line-height: 1.4; }
+  #rampwrap input[type=range] {
+    position: absolute; left: 0; top: 0; width: 100%; height: 26px; margin: 0;
+    -webkit-appearance: none; appearance: none; background: transparent; pointer-events: none; }
+  #rampwrap input[type=range]:focus { outline: none; }
+  #rampwrap input[type=range]::-webkit-slider-runnable-track { height: 26px; background: transparent; }
+  #rampwrap input[type=range]::-moz-range-track { height: 26px; background: transparent; }
+  #rampwrap input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; pointer-events: auto; cursor: ew-resize;
+    width: 11px; height: 26px; border-radius: 3px;
+    background: var(--thumb); border: 1px solid var(--thumbline);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.4); }
+  #rampwrap input[type=range]::-moz-range-thumb {
+    pointer-events: auto; cursor: ew-resize; width: 11px; height: 26px; border-radius: 3px;
+    background: var(--thumb); border: 1px solid var(--thumbline); }
+  #rampwrap input[type=range]:focus-visible::-webkit-slider-thumb { border-color: var(--accent); border-width: 2px; }
+  #rampwrap input[type=range]:focus-visible::-moz-range-thumb { border-color: var(--accent); border-width: 2px; }
+
+  .ticks { position: relative; height: 12px; margin-top: 2px; font-size: 10px; color: var(--muted); }
+  .ticks span { position: absolute; transform: translateX(-50%); }
+  /* Reference marks stagger over two rows: at 300px wide, forest (0.83) and
+     water (0.97) are 42px apart and collide on one line. */
+  #marks { position: relative; height: 32px; margin-top: 0; }
+  #leaders { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  #marks .m { position: absolute; font-size: 9.5px; color: var(--muted); white-space: nowrap; }
+  #marks .m.r0 { top: 6px; } #marks .m.r1 { top: 19px; }
+  #leaders path { fill: none; stroke: var(--muted); stroke-width: 1; opacity: .55; }
+  #marks .m b { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 10.5px; color: var(--muted); }
+  .row .grow { flex: 1; }
+  #pals button { position: relative; width: 46px; height: 16px; padding: 0; border-radius: 3px;
+                 border: 1px solid var(--line); cursor: pointer; overflow: hidden; }
+  #pals button.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  #pals button span { position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; font-size: 8.5px; letter-spacing: .02em; color: #fff;
+    text-shadow: 0 0 3px rgba(0,0,0,.85); font-weight: 600; }
+  #rreset { font: inherit; font-size: 10.5px; padding: 1px 6px; cursor: pointer; background: var(--ctl);
+            color: var(--muted); border: 1px solid var(--line); border-radius: 3px; visibility: hidden; }
+  #rreset:hover { border-color: var(--accent); color: var(--accent); }
+  #area { margin-top: 5px; font-size: 11.5px; color: var(--text); }
+  #area b { font-variant-numeric: tabular-nums; }
+  #area i { font-style: normal; color: var(--muted); }
+  #readout { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
+             font-size: 11.5px; color: var(--muted); min-height: 30px; }
+  #readout b { color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; }
+
+  .leaflet-container { background: var(--bg); }
+  .leaflet-control-attribution { background: var(--panel) !important; color: var(--muted) !important; font-size: 10px; }
+  .leaflet-control-attribution a { color: var(--accent) !important; }
+  .leaflet-bar a { background: var(--ctl) !important; color: var(--text) !important; border-color: var(--line) !important; }
+
+  @media (max-width: 820px) {
+    #legend { width: calc(100vw - 24px); max-width: 300px; bottom: 10px; }
+  }
+</style>
+</head>
+<body class="theme-dark">
+<div id="map"></div>
+
+<div id="title" class="panel">
+  <h1>Nature-likeness: Vancouver Island, 2024</h1>
+  <p>Every 10 m pixel scored 0 to 1 by similarity to forest, wetland and water,
+     against built-up land, in Google Satellite Embedding V1. Sea is masked.
+     <a href="#" id="about-link">How it works</a></p>
+  <div id="about" hidden></div>
+  <a id="brand" href="https://www.lgeo.co" target="_blank" rel="noopener"
+     title="Licker Geospatial Consulting"><img src="lgeo-logo.svg" alt="LGeo"></a>
+</div>
+
+<div id="legend" class="panel">
+  <canvas id="dist" width="600" height="34"></canvas>
+  <div id="plotwrap">
+    <div id="rampwrap">
+      <canvas id="ramp" width="600" height="26"></canvas>
+      <input id="rlo" type="range" min="0" max="1000" step="1" value="0"
+             aria-label="Lowest nature-likeness value shown">
+      <input id="rhi" type="range" min="0" max="1000" step="1" value="1000"
+             aria-label="Highest nature-likeness value shown">
+    </div>
+    <div class="cut" id="cutlo"></div>
+    <div class="cut" id="cuthi"></div>
+  </div>
+  <div id="marks"></div>
+  <div class="row" id="fadewrap">
+    <span class="ico" title="Layer opacity">&#9686;</span>
+    <input id="opacity" type="range" min="0" max="100" value="88" aria-label="Layer opacity">
+    <span class="grow"></span>
+    <span id="pals" class="chips"></span>
+  </div>
+  <div id="caption"></div>
+  <div class="row">
+    <span class="grow" id="rangetext">showing all values</span>
+    <button id="rreset" type="button">reset</button>
+  </div>
+  <div id="area">&nbsp;</div>
+  <div id="readout">Click the map to read a pixel value.</div>
+  <div class="foot">
+    <span class="flab">Basemap</span>
+    <span id="bases" class="seg"></span>
+    <span class="flab" style="margin-left:4px">Parks</span>
+    <span id="parktoggle" class="seg"><button type="button" aria-pressed="false">Off</button></span>
+  </div>
+  <div class="foot">
+    <span class="flab">Jump to</span>
+  </div>
+  <div class="chips places">
+    <button data-at="48.43,-123.36,12" title="Urban core, mean 0.199">Victoria</button>
+    <button data-at="49.835,-124.523,12" title="Powell River, town against forest, mean 0.488">qathet</button>
+    <button data-at="49.85,-125.25,12" title="Working forest, 27% of pixels below 0.62">Cutblocks</button>
+    <button data-at="50.79,-128.05,12" title="Cape Scott wind farm, mean 0.693 against ~0.9 around it">Wind farm</button>
+    <button data-at="48.83,-124.15,11" title="Agricultural mosaic, mean 0.816">Cowichan</button>
+    <button data-at="49.68,-125.63,11" title="Protected alpine and old growth, park-wide mean 0.86">Strathcona</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(async function () {
+  const meta  = await fetch('meta.json').then(r => r.json());
+  const BUILD = meta.build || '0';
+  const SCALE = 254;
+
+  // Two palettes, because there are only two useful questions: where is the
+  // intact land, and where is the settlement. Both are monotonic in CIELAB
+  // lightness, so lightness alone carries the signal.
+  const PALETTES = {
+    forest: { name: 'Forest', stops: ['#f7dfc4','#eab98a','#cfa06a','#a3a05e','#6b955a','#357049','#12402d'] },
+    // Stops at a mid sage rather than near-white: an L* 93 high end is the same
+    // lightness as the hillshade basemap, so the forest matrix vanished into it
+    // (dE 14). Ending at L* 70 puts it at dE 43 and the island reads as land.
+    slate:  { name: 'Settlement', stops: ['#1d2932','#334654','#4e6873','#688273','#7f9b68','#9ab377'] },
+  };
+  const ORDER = ['forest','slate'];
+  // Forest (pale low end) reads on dark and satellite; Settlement (dark low end)
+  // makes built-up legible on a light basemap. Follows the basemap until picked.
+  const THEME_PALETTE = { light: 'slate', dark: 'forest' };
+  let palKey = 'slate', palPinned = false;
+
+  function buildLut(stops) {
+    const rgb = stops.map(h => [parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]);
+    const lut = new Uint8ClampedArray(256 * 3);
+    for (let v = 1; v < 256; v++) {
+      const t = (v - 1) / SCALE * (rgb.length - 1);
+      const i = Math.min(Math.floor(t), rgb.length - 2), f = t - i;
+      for (let c = 0; c < 3; c++) lut[v*3+c] = rgb[i][c] + (rgb[i+1][c] - rgb[i][c]) * f;
+    }
+    return lut;
+  }
+  let LUT = buildLut(PALETTES[palKey].stops);
+  let LO = 0, HI = 1;
+
+  const ValueLayer = L.GridLayer.extend({
+    initialize: function (url, opts) { L.setOptions(this, opts); this._url = url;
+      this._raw = new Map(); this._alp = new Map(); },
+    _key: c => c.z + '/' + c.x + '/' + c.y,
+    _paint: function (canvas, raw, alp) {
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(canvas.width, canvas.height), d = img.data;
+      for (let p = 0, q = 0; p < raw.length; p++, q += 4) {
+        const v = raw[p];
+        if (v === 0) { d[q+3] = 0; continue; }
+        const s = (v - 1) / SCALE;
+        if (s < LO || s > HI) { d[q+3] = 0; continue; }
+        d[q] = LUT[v*3]; d[q+1] = LUT[v*3+1]; d[q+2] = LUT[v*3+2];
+        d[q+3] = alp ? alp[p] : 255;   // clip fade, baked per pixel at build time
+      }
+      ctx.putImageData(img, 0, 0);
+    },
+    createTile: function (coords, done) {
+      const size = this.getTileSize();
+      const canvas = L.DomUtil.create('canvas');
+      canvas.width = size.x; canvas.height = size.y;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const img = new Image(), key = this._key(coords);
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0);
+        const px = ctx.getImageData(0, 0, size.x, size.y).data;
+        const raw = new Uint8Array(size.x * size.y);
+        const alp = new Uint8Array(size.x * size.y);
+        for (let p = 0, q = 0; p < raw.length; p++, q += 4) { raw[p] = px[q]; alp[p] = px[q+3]; }
+        this._raw.set(key, raw); this._alp.set(key, alp);
+        this._paint(canvas, raw, alp);
+        done(null, canvas);
+      };
+      img.onerror = () => done(null, canvas);   // sparse pyramid: 404 means empty
+      img.src = this._url.replace('{z}', coords.z).replace('{x}', coords.x)
+                         .replace('{y}', coords.y) + '?v=' + BUILD;
+      return canvas;
+    },
+    repaint: function () {
+      for (const k in this._tiles) {
+        const t = this._tiles[k], key = this._key(t.coords);
+        const raw = this._raw.get(key);
+        if (raw) this._paint(t.el, raw, this._alp.get(key));
+      }
+    },
+    sample: function (latlng, zoom) {
+      const p = this._map.project(latlng, zoom);
+      const raw = this._raw.get(zoom + '/' + Math.floor(p.x/256) + '/' + Math.floor(p.y/256));
+      if (!raw) return undefined;
+      const v = raw[(Math.floor(p.y) % 256) * 256 + (Math.floor(p.x) % 256)];
+      return v === 0 ? null : (v - 1) / SCALE;
+    },
+  });
+
+  const map = L.map('map', { center: [49.4, -125.2], zoom: 7,
+    minZoom: meta.minZoom, maxZoom: meta.maxZoom });
+  map.attributionControl.setPrefix('');
+
+  const ESRI = 'Tiles &copy; Esri';
+  const A = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+  const CARTO_L = 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png';
+  const CARTO_ATTR = '&copy; OpenStreetMap, &copy; CARTO';
+  // Hillshade carries relief but no land/water edge, so on its own the sea, the
+  // land and the area outside the clip are all the same white. Pairing it with a
+  // light base gives a coastline and keeps the excluded mainland legible as land
+  // rather than as missing data.
+  const bases = {
+    terrain: { theme: 'light', label: 'Terrain', layers: [
+      L.tileLayer(CARTO_L, { maxZoom: 19, attribution: CARTO_ATTR }),
+      L.tileLayer(A + 'Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 16, opacity: 0.5, attribution: ESRI + ', World Hillshade' }),
+    ] },
+    satellite: { theme: 'dark', label: 'Satellite', layers: [
+      L.tileLayer(A + 'World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        { maxZoom: 18, attribution: ESRI + ', Maxar, Earthstar Geographics' }),
+    ] },
+  };
+  const showBase = k => bases[k].layers.forEach(l => { l.addTo(map); l.bringToBack(); });
+  const hideBase = k => bases[k].layers.forEach(l => map.removeLayer(l));
+  let baseKey = 'terrain';
+  showBase(baseKey);
+
+  const natlik = new ValueLayer('tiles/{z}/{x}/{y}.png', {
+    minZoom: meta.minZoom, maxZoom: meta.maxZoom, maxNativeZoom: meta.maxZoom, opacity: 0.88,
+    attribution: 'Nature-likeness: Satellite Embedding V1, ESA WorldCover, JRC GSW, Copernicus GLO-30',
+  }).addTo(map);
+
+  map.fitBounds(meta.bounds);
+  map.setMaxBounds(L.latLngBounds(meta.bounds).pad(0.35));
+
+  // ---- theme -------------------------------------------------------------
+  function applyTheme() {
+    const want = bases[baseKey].theme;
+    document.body.className = 'theme-' + want;
+    if (!palPinned && THEME_PALETTE[want] && THEME_PALETTE[want] !== palKey) {
+      palKey = THEME_PALETTE[want];
+      LUT = buildLut(PALETTES[palKey].stops);
+      if (typeof paintSwatch === 'function') { paintSwatch(); drawRamp(); drawDist(); natlik.repaint(); }
+    }
+  }
+
+  // ---- legend scaffolding ------------------------------------------------
+  const rampCv = document.getElementById('ramp');
+  const MARKS = [
+    { v: 0.206, t: 'built', l: '0.21' }, { v: 0.645, t: 'talus', l: '0.65' },
+    { v: 0.826, t: 'forest', l: '0.83' }, { v: 0.965, t: 'water', l: '0.97' },
+  ];
+  function drawRamp() {
+    const ctx = rampCv.getContext('2d');
+    const img = ctx.createImageData(rampCv.width, rampCv.height), d = img.data;
+    for (let x = 0; x < rampCv.width; x++) {
+      const v = 1 + Math.round(x / (rampCv.width - 1) * SCALE);
+      for (let y = 0; y < rampCv.height; y++) {
+        const q = (y * rampCv.width + x) * 4;
+        d[q] = LUT[v*3]; d[q+1] = LUT[v*3+1]; d[q+2] = LUT[v*3+2]; d[q+3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    // thin reference ticks drawn into the ramp, so marks and labels can never drift
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    for (const m of MARKS) {
+      const x = Math.round(m.v * (rampCv.width - 1));
+      ctx.fillRect(x, 0, 1, 5); ctx.fillRect(x, rampCv.height - 5, 1, 5);
+    }
+  }
+
+  // Two rows, so neighbouring labels cannot collide: forest (0.83) and water
+  // (0.97) are only ~40px apart on a 300px panel.
+  const marksEl = document.getElementById('marks');
+  // The svg is written here, not in the markup: this assignment replaces the
+  // element's children, so a leaders element nested in the HTML was destroyed
+  // on first render and every later line threw on the missing node.
+  marksEl.innerHTML = '<svg id="leaders"></svg>' + MARKS.map((m, i) =>
+    '<span class="m r' + (i % 2) + '">' + m.t + ' <b>' + m.l + '</b></span>').join('');
+
+  // Each label is tied to its position on the ramp by a leader, because a
+  // staggered, edge-clamped label is otherwise floating next to a gradient with
+  // nothing saying which point on it the number refers to.
+  function layoutMarks() {
+    const W = marksEl.clientWidth, svg = document.getElementById('leaders');
+    const labels = [...marksEl.querySelectorAll('.m')];
+    const lines = [];
+    labels.forEach((el, i) => {
+      const w = el.offsetWidth;
+      const x = MARKS[i].v * W;
+      const left = Math.max(0, Math.min(W - w, x - w / 2));
+      el.style.left = left + 'px';
+      const cx = left + w / 2, top = (i % 2) ? 19 : 6;
+      lines.push('<path d="M' + x.toFixed(1) + ',0 L' + x.toFixed(1) + ',' +
+                 (top - 4) + ' L' + cx.toFixed(1) + ',' + top + '" />');
+    });
+    svg.innerHTML = lines.join('');
+  }
+
+  // ---- range filter ------------------------------------------------------
+  const rlo = document.getElementById('rlo'), rhi = document.getElementById('rhi');
+  const cutlo = document.getElementById('cutlo'), cuthi = document.getElementById('cuthi');
+  const rtext = document.getElementById('rangetext'), rreset = document.getElementById('rreset');
+  const areaEl = document.getElementById('area');
+  const THUMB = 11;
+  const posPx = f => f * (document.getElementById('rampwrap').clientWidth - THUMB) + THUMB / 2;
+
+  const hist = await fetch('histogram.json').then(r => r.json()).catch(() => null);
+  const fmt = n => n >= 100 ? Math.round(n).toLocaleString()
+                            : n >= 10 ? n.toFixed(0) : n.toFixed(1);
+  const pct = v => v >= 99.95 ? '100' : v < 0.1 ? v.toFixed(2) : v.toFixed(1);
+  function areaFor(lo, hi) {
+    if (!hist) return null;
+    let sum = 0;
+    const b0 = Math.max(1, Math.ceil(lo * SCALE) + 1), b1 = Math.min(255, Math.floor(hi * SCALE) + 1);
+    for (let b = b0; b <= b1; b++) sum += hist.bins_km2[b];
+    return sum;
+  }
+
+  function applyRange(moved) {
+    // Clamp, never swap: swapping makes the thumb you are holding become the
+    // other one. The gap stops them landing on the same pixel, where the one
+    // underneath cannot be grabbed.
+    const GAP = 10;
+    if (moved === 'lo' && +rlo.value > +rhi.value - GAP) rlo.value = Math.max(0, +rhi.value - GAP);
+    if (moved === 'hi' && +rhi.value < +rlo.value + GAP) rhi.value = Math.min(1000, +rlo.value + GAP);
+    LO = +rlo.value / 1000; HI = +rhi.value / 1000;
+
+    rlo.setAttribute('aria-valuemax', HI.toFixed(3));
+    rhi.setAttribute('aria-valuemin', LO.toFixed(3));
+    rlo.setAttribute('aria-valuetext', LO.toFixed(3));
+    rhi.setAttribute('aria-valuetext', HI.toFixed(3));
+
+    cutlo.style.left = '1px';
+    cutlo.style.width = Math.max(0, posPx(LO) - 1) + 'px';
+    cuthi.style.left = posPx(HI) + 'px';
+    cuthi.style.right = '1px';
+
+    const full = LO === 0 && HI === 1;
+    rtext.textContent = full ? 'showing all values'
+                             : 'showing ' + LO.toFixed(2) + ' to ' + HI.toFixed(2);
+    rreset.style.visibility = full ? 'hidden' : 'visible';
+    rlo.style.zIndex = HI < 0.5 ? 4 : 3;
+    rhi.style.zIndex = HI < 0.5 ? 3 : 4;
+
+    const km2 = areaFor(LO, HI);
+    areaEl.innerHTML = km2 === null ? '&nbsp;'
+      : '<b>' + fmt(km2) + '</b> km² <i>· ' +
+        pct(100 * km2 / hist.total_km2) +
+        '% of the ' + fmt(hist.total_km2) + ' km² mapped</i>';
+
+    natlik.repaint();
+  }
+  rlo.addEventListener('input', () => applyRange('lo'));
+  rhi.addEventListener('input', () => applyRange('hi'));
+  rreset.addEventListener('click', () => { rlo.value = 0; rhi.value = 1000; applyRange(); });
+
+  // ---- palette swatch ----------------------------------------------------
+  // Two labelled gradient swatches rather than one chip that cycles: a cycling
+  // control gives no clue what the next state is, or that there are only two.
+  const palsEl = document.getElementById('pals');
+  function paintSwatch() {
+    palsEl.innerHTML = ORDER.map(k =>
+      '<button data-pal="' + k + '"' + (k === palKey ? ' class="on"' : '') +
+      ' title="' + PALETTES[k].name + ' palette" style="background:linear-gradient(to right,' +
+      PALETTES[k].stops.join(',') + ')"><span>' + PALETTES[k].name + '</span></button>').join('');
+  }
+  palsEl.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    palPinned = true; palKey = b.dataset.pal;
+    LUT = buildLut(PALETTES[palKey].stops);
+    paintSwatch(); drawRamp(); drawDist(); natlik.repaint();
+  });
+
+  // The distribution was already computed for the area readout and then thrown
+  // away. Drawing it is the difference between a legend that decorates and one
+  // that explains: it shows the mass sitting hard against the high end, which is
+  // why "everything looks green" is a fact about the coast rather than a failure
+  // of the palette, and it makes the filter's numbers unsurprising.
+  const distCv = document.getElementById('dist');
+  function drawDist() {
+    if (!hist) return;
+    const ctx = distCv.getContext('2d'), W = distCv.width, H = distCv.height;
+    ctx.clearRect(0, 0, W, H);
+    // log1p: the peak bin holds several hundred times the area of a settlement
+    // bin, and a linear axis erases the tail the filter exists to find.
+    let mx = 0; const t = new Float64Array(256);
+    for (let v = 1; v < 256; v++) { t[v] = Math.log1p(hist.bins_km2[v]); if (t[v] > mx) mx = t[v]; }
+    // One neutral ink, not the palette. Colouring the bars by the ramp and then
+    // stacking them on the ramp merged the two into a single shape, so neither
+    // the distribution nor the colour scale could be read.
+    const cs = getComputedStyle(document.body);
+    ctx.fillStyle = cs.getPropertyValue('--muted').trim() || '#98a1a8';
+    for (let x = 0; x < W; x++) {
+      const v = 1 + Math.round(x / (W - 1) * SCALE);
+      const h = Math.max(0, Math.round(t[v] / mx * (H - 2)));
+      ctx.fillRect(x, H - 1 - h, 1, h);
+    }
+    ctx.fillStyle = cs.getPropertyValue('--line').trim() || '#333b44';
+    ctx.fillRect(0, H - 1, W, 1);
+  }
+
+  let cum = null, median = null;
+  if (hist) {
+    cum = new Float64Array(256); let run = 0;
+    for (let v = 0; v < 256; v++) { run += hist.bins_km2[v]; cum[v] = run; }
+    for (let v = 1; v < 256 && median === null; v++)
+      if (cum[v] >= hist.total_km2 / 2) median = (v - 1) / SCALE;
+    document.getElementById('caption').textContent =
+      'How much land sits at each score; half is above ' + median.toFixed(2) +
+      '. Small areas are exaggerated so they stay visible.';
+  }
+  const pctileOf = v => {
+    if (!cum) return null;
+    const b = Math.min(255, Math.max(1, Math.round(v * SCALE) + 1));
+    return 100 * cum[b] / hist.total_km2;
+  };
+
+  function relayout() { drawRamp(); drawDist(); layoutMarks(); applyRange(); }
+  window.addEventListener('resize', relayout);
+  paintSwatch(); applyTheme(); relayout();
+
+  document.getElementById('opacity').addEventListener('input', e =>
+    natlik.setOpacity(e.target.value / 100));
+  const baseWrap = document.getElementById('bases');
+  baseWrap.innerHTML = Object.keys(bases).map(k =>
+    '<button data-base="' + k + '"' + (k === baseKey ? ' class="on"' : '') +
+    ' role="radio" aria-checked="' + (k === baseKey) + '">' + bases[k].label + '</button>').join('');
+  baseWrap.setAttribute('role', 'radiogroup');
+  baseWrap.addEventListener('click', e => {
+    const k = e.target.dataset.base;
+    if (!k || k === baseKey) return;
+    hideBase(baseKey);
+    baseKey = k;
+    showBase(baseKey);
+    [...baseWrap.children].forEach(b => {
+      const on = b.dataset.base === k;
+      b.classList.toggle('on', on); b.setAttribute('aria-checked', on);
+    });
+    applyTheme();
+  });
+  document.querySelectorAll('.places button').forEach(b =>
+    b.addEventListener('click', () => {
+      const [lat, lon, z] = b.dataset.at.split(',').map(Number);
+      map.setView([lat, lon], z);
+    }));
+
+  // ---- protected areas overlay -------------------------------------------
+  // Outlines only, no fill: the point is to see the score through them, which
+  // is what makes the undesignated high-scoring land obvious.
+  let parks = null, parksOn = false;
+  const parkStyle = k => ({
+    color: k === 'National' ? '#1b3a5c' : k === 'Provincial' ? '#26543a' : '#6b5330',
+    weight: 1.1, opacity: 0.95, fill: false,
+  });
+  const parkBtn = document.querySelector('#parktoggle button');
+  parkBtn.addEventListener('click', async () => {
+    parksOn = !parksOn;
+    parkBtn.textContent = parksOn ? 'On' : 'Off';
+    parkBtn.classList.toggle('on', parksOn);
+    parkBtn.setAttribute('aria-pressed', parksOn);
+    if (!parksOn) { if (parks) map.removeLayer(parks); return; }
+    if (!parks) {
+      parkBtn.textContent = '...';
+      const gj = await fetch('parks.geojson?v=' + BUILD).then(r => r.json());
+      parks = L.geoJSON(gj, {
+        style: f => parkStyle(f.properties.kind),
+        onEachFeature: (f, l) => l.bindTooltip(
+          (f.properties.name || 'Unnamed') + ' · ' + f.properties.kind, { sticky: true }),
+      });
+      parkBtn.textContent = 'On';
+    }
+    parks.addTo(map);
+  });
+
+  // ---- click readout -----------------------------------------------------
+  const [hdr, buf] = await Promise.all([
+    fetch('values.json').then(r => r.json()),
+    fetch('values.bin?v=' + BUILD).then(r => r.arrayBuffer()),
+  ]);
+  const vals = new Uint8Array(buf);
+  const readout = document.getElementById('readout');
+  const inAoi = L.latLngBounds(meta.bounds);
+  function coarse(latlng) {
+    const p = L.CRS.EPSG3857.project(latlng);
+    const col = Math.floor((p.x - hdr.west_m) / hdr.res_m), row = Math.floor((hdr.north_m - p.y) / hdr.res_m);
+    if (col < 0 || row < 0 || col >= hdr.width || row >= hdr.height) return null;
+    const v = vals[row * hdr.width + col];
+    return v === hdr.nodata ? null : (v - 1) / hdr.scale;
+  }
+  const describe = s =>
+    s < 0.30 ? 'built-up or heavily modified' :
+    s < 0.55 ? 'bare, disturbed or open ground' :
+    s < 0.70 ? 'mixed: agriculture, alpine rock, regrowth' :
+    s < 0.85 ? 'forest, alpine meadow' : 'closed forest or water';
+
+  map.on('click', e => {
+    const z = Math.min(map.getZoom(), meta.maxZoom);
+    let s = natlik.sample(e.latlng, z), exact = true;
+    if (s === undefined) { s = coarse(e.latlng); exact = false; }
+    if (s === null || s === undefined) {
+      readout.innerHTML = inAoi.contains(e.latlng)
+        ? 'Sea. The layer is masked to land and inland water.'
+        : 'Outside the modelled area. The extent is the dashed box.';
+      return;
+    }
+    const pc = pctileOf(s);
+    readout.innerHTML = '<b>' + s.toFixed(3) + '</b> ' + describe(s) +
+      (pc === null ? '' : '<br>higher than ' + pc.toFixed(0) + '% of the mapped area') +
+      '<br>' + e.latlng.lat.toFixed(4) + ', ' + e.latlng.lng.toFixed(4) + ' · ' +
+      // "exact" was misleading: a z7 tile pixel is ~790 m of averaged ground, not
+      // a 10 m reading. Report the ground resolution actually behind the number.
+      (exact ? Math.round(156543.034 * Math.cos(e.latlng.lat * Math.PI / 180) / Math.pow(2, z))
+                 + ' m pixel'
+             : '~' + Math.round(hdr.res_m) + ' m grid') +
+      ' · <a id="osm" target="_blank" rel="noopener" href="https://www.openstreetmap.org/#map=15/' +
+      e.latlng.lat.toFixed(5) + '/' + e.latlng.lng.toFixed(5) + '">open in OSM</a>';
+  });
+
+  const aboutEl = document.getElementById('about'), aboutLink = document.getElementById('about-link');
+  aboutEl.innerHTML =
+    '<p>For each anchor class in ESA WorldCover, the 64-dimensional Satellite Embedding V1 ' +
+    'vectors are averaged into one mean vector. Each pixel scores ' +
+    '<code>sigmoid(5 &times; (max cosine to a positive anchor &minus; max cosine to a negative ' +
+    'anchor))</code>, plus a small riparian prior within 30 m of mapped water.</p>' +
+    '<p>Positive anchors: ' + meta.positives.join(', ') + '. Negative: ' + meta.negatives.join(', ') +
+    '. No training data and no per-region calibration, so scores are comparable within this ' +
+    'region but not against a separately fitted one.</p>' +
+    '<p>Tiles carry the value rather than a colour, so the palette and the filter are applied ' +
+    'in your browser and the clicked figure is the actual pixel. Areas are summed from a ' +
+    'full-resolution histogram weighted by latitude. The distribution is drawn on a log scale, ' +
+    'because the peak bin holds several hundred times the area of a settlement bin.</p>' +
+    (meta.post ? '<p><a href="' + meta.post + '" target="_blank" rel="noopener">' +
+      'Read the full write-up, including what the layer gets wrong</a>.</p>' : '') +
+    '<p class="muted">Build ' + BUILD + '. Sea is masked; lakes and rivers are kept. ' +
+    'The mapped area is clipped to Vancouver Island, the Gulf Islands and the ' +
+    'Sunshine Coast; the underlying raster covers more.</p>';
+  aboutLink.addEventListener('click', ev => {
+    ev.preventDefault();
+    aboutEl.hidden = !aboutEl.hidden;
+    aboutLink.textContent = aboutEl.hidden ? 'How it works' : 'Hide';
+  });
+})();
+</script>
+</body>
+</html>

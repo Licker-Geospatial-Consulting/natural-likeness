@@ -1,0 +1,10 @@
+{
+ "width": 1984,
+ "height": 1600,
+ "west_m": -14313903.664795246,
+ "north_m": 6643295.002321238,
+ "res_m": 305.748113140705,
+ "scale": 254,
+ "nodata": 0,
+ "note": "score = (v - 1) / scale; v == nodata means ocean or no coverage"
+}
