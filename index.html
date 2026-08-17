@@ -13,6 +13,7 @@
     --text: #e8eaec; --muted: #98a1a8; --accent: #d7dce0;
     --ctl: #1b2026; --thumb: #f4f6f7; --thumbline: #0a0d10;
     --cut: rgba(8,11,14,.74); --shadow: 0 2px 10px rgba(0,0,0,.45); --panelOn: #12161a;
+    --thumb-w: 11px;
   }
   .theme-light {
     --bg: #eef0f1; --panel: #fbfbfa; --line: #c9cfd4;
@@ -96,11 +97,11 @@
   #rampwrap input[type=range]::-moz-range-track { height: 26px; background: transparent; }
   #rampwrap input[type=range]::-webkit-slider-thumb {
     -webkit-appearance: none; pointer-events: auto; cursor: ew-resize;
-    width: 11px; height: 26px; border-radius: 3px;
+    width: var(--thumb-w); height: 26px; border-radius: 3px;
     background: var(--thumb); border: 1px solid var(--thumbline);
     box-shadow: 0 0 0 1px rgba(0,0,0,.35), 0 1px 3px rgba(0,0,0,.4); }
   #rampwrap input[type=range]::-moz-range-thumb {
-    pointer-events: auto; cursor: ew-resize; width: 11px; height: 26px; border-radius: 3px;
+    pointer-events: auto; cursor: ew-resize; width: var(--thumb-w); height: 26px; border-radius: 3px;
     background: var(--thumb); border: 1px solid var(--thumbline); }
   #rampwrap input[type=range]:focus-visible::-webkit-slider-thumb { border-color: var(--accent); border-width: 2px; }
   #rampwrap input[type=range]:focus-visible::-moz-range-thumb { border-color: var(--accent); border-width: 2px; }
@@ -139,8 +140,41 @@
   .leaflet-control-attribution a { color: var(--accent) !important; }
   .leaflet-bar a { background: var(--ctl) !important; color: var(--text) !important; border-color: var(--line) !important; }
 
-  @media (max-width: 820px) {
-    #legend { width: calc(100vw - 24px); max-width: 300px; bottom: 10px; }
+  #sheet {
+    display: none; width: 100%; margin-top: 8px; padding: 7px; cursor: pointer;
+    background: var(--ctl); color: var(--muted); border: 1px solid var(--line);
+    border-radius: 5px; font: inherit; font-size: 11.5px;
+  }
+
+  /* Touch devices: every control was under the 44 px minimum and the slider
+     thumbs were 11 px, which is not draggable with a thumb. */
+  @media (pointer: coarse) {
+    :root, .theme-dark, .theme-light { --thumb-w: 26px; }
+    .chips button, .seg button, #rreset { padding: 9px 13px; font-size: 12.5px; }
+    #pals button { width: 60px; height: 30px; }
+    #rampwrap, #ramp, #rampwrap input[type=range] { height: 34px; }
+    #rampwrap input[type=range]::-webkit-slider-thumb { height: 34px; }
+    #rampwrap input[type=range]::-moz-range-thumb { height: 34px; }
+    #opacity { height: 30px; flex: 0 0 110px; }
+  }
+
+  /* Small screens: the two cards covered 55% of a phone. The legend becomes a
+     bottom sheet that keeps only the scale, the area and the readout, with the
+     rest one tap away. */
+  @media (max-width: 760px) {
+    #title { top: 8px; left: 8px; right: 8px; max-width: none; padding: 9px 11px; }
+    #title p, #brand { display: none; }
+    #title h1 { font-size: 13px; margin: 0; }
+    body.about-open #title p, body.about-open #brand { display: block; }
+
+    #legend { left: 8px; right: 8px; bottom: 8px; width: auto; max-width: none; }
+    #legend.collapsed #dist,
+    #legend.collapsed #marks,
+    #legend.collapsed #caption,
+    #legend.collapsed .row,
+    #legend.collapsed .foot,
+    #legend.collapsed .places { display: none; }
+    #sheet { display: block; }
   }
 </style>
 </head>
@@ -183,7 +217,8 @@
     <button id="rreset" type="button">reset</button>
   </div>
   <div id="area">&nbsp;</div>
-  <div id="readout">Click the map to read a pixel value.</div>
+  <div id="readout">Tap the map to read a pixel value.</div>
+  <button id="sheet" type="button" aria-expanded="false">More controls</button>
   <div class="foot">
     <span class="flab">Basemap</span>
     <span id="bases" class="seg"></span>
@@ -398,7 +433,9 @@
   const cutlo = document.getElementById('cutlo'), cuthi = document.getElementById('cuthi');
   const rtext = document.getElementById('rangetext'), rreset = document.getElementById('rreset');
   const areaEl = document.getElementById('area');
-  const THUMB = 11;
+  // read from CSS so the shaded cut cannot drift from the thumb when the
+  // touch stylesheet widens it
+  const THUMB = parseFloat(getComputedStyle(document.body).getPropertyValue('--thumb-w')) || 11;
   const posPx = f => f * (document.getElementById('rampwrap').clientWidth - THUMB) + THUMB / 2;
 
   const hist = await fetch('histogram.json').then(r => r.json()).catch(() => null);
@@ -512,6 +549,21 @@
     return 100 * cum[b] / hist.total_km2;
   };
 
+  // Collapsed by default on phones so the map gets the screen back.
+  const sheetBtn = document.getElementById('sheet');
+  const legendEl = document.getElementById('legend');
+  const small = () => window.matchMedia('(max-width: 760px)').matches;
+  function syncSheet(collapse) {
+    legendEl.classList.toggle('collapsed', collapse);
+    sheetBtn.textContent = collapse ? 'More controls' : 'Fewer controls';
+    sheetBtn.setAttribute('aria-expanded', String(!collapse));
+  }
+  sheetBtn.addEventListener('click', () => {
+    syncSheet(!legendEl.classList.contains('collapsed'));
+    if (!legendEl.classList.contains('collapsed')) relayout();
+  });
+  if (small()) syncSheet(true);
+
   function relayout() { drawRamp(); drawDist(); layoutMarks(); applyRange(); }
   window.addEventListener('resize', relayout);
   paintSwatch(); applyTheme(); relayout();
@@ -561,8 +613,13 @@
       const gj = await fetch('parks.geojson?v=' + BUILD).then(r => r.json());
       parks = L.geoJSON(gj, {
         style: f => parkStyle(f.properties.kind),
-        onEachFeature: (f, l) => l.bindTooltip(
-          (f.properties.name || 'Unnamed') + ' · ' + f.properties.kind, { sticky: true }),
+        // hover: none means bindTooltip never fires on a phone, so bind a popup
+        // there instead and keep the hover tooltip on pointer devices
+        onEachFeature: (f, l) => {
+          const label = (f.properties.name || 'Unnamed') + ' · ' + f.properties.kind;
+          if (window.matchMedia('(hover: hover)').matches) l.bindTooltip(label, { sticky: true });
+          else l.bindPopup(label);
+        },
       });
       parkBtn.textContent = 'On';
     }
