@@ -78,6 +78,7 @@
   .seg button.on { background: var(--accent); color: var(--panelOn); font-weight: 600; }
   #parktoggle button { min-width: 34px; }
   .seg button:not(.on):hover { color: var(--text); }
+  #post-link { color: var(--accent); font-size: 11.5px; }
   #brand { display: block; margin-top: 9px; opacity: .75; }
   #brand:hover { opacity: 1; }
   #brand img { width: 74px; height: auto; display: block; }
@@ -163,9 +164,8 @@
      rest one tap away. */
   @media (max-width: 760px) {
     #title { top: 8px; left: 8px; right: 8px; max-width: none; padding: 9px 11px; }
-    #title p, #brand { display: none; }
+    #title p { display: none; }
     #title h1 { font-size: 13px; margin: 0; }
-    body.about-open #title p, body.about-open #brand { display: block; }
 
     #legend { left: 8px; right: 8px; bottom: 8px; width: auto; max-width: none; }
     #legend.collapsed #dist,
@@ -185,8 +185,8 @@
   <h1>Nature-likeness: Vancouver Island, 2024</h1>
   <p>Every 10 m pixel scored 0 to 1 by similarity to forest, wetland and water,
      against built-up land, in Google Satellite Embedding V1. Sea is masked.
-     <a href="#" id="about-link">How it works</a></p>
-  <div id="about" hidden></div>
+     </p>
+  <a id="post-link" target="_blank" rel="noopener">How it works</a>
   <a id="brand" href="https://www.lgeo.co" target="_blank" rel="noopener"
      title="Licker Geospatial Consulting"><img src="lgeo-logo.svg" alt="LGeo"></a>
 </div>
@@ -241,7 +241,10 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 (async function () {
-  const meta  = await fetch('meta.json').then(r => r.json());
+  // no-cache: meta.json carries the build id that busts every other request,
+  // so if it is itself served from cache a rebuild is invisible to returning
+  // visitors and they keep the previous build's tiles.
+  const meta  = await fetch('meta.json', { cache: 'no-cache' }).then(r => r.json());
   const BUILD = meta.build || '0';
   const SCALE = 254;
 
@@ -670,29 +673,12 @@
       e.latlng.lat.toFixed(5) + '/' + e.latlng.lng.toFixed(5) + '">open in OSM</a>';
   });
 
-  const aboutEl = document.getElementById('about'), aboutLink = document.getElementById('about-link');
-  aboutEl.innerHTML =
-    '<p>For each anchor class in ESA WorldCover, the 64-dimensional Satellite Embedding V1 ' +
-    'vectors are averaged into one mean vector. Each pixel scores ' +
-    '<code>sigmoid(5 &times; (max cosine to a positive anchor &minus; max cosine to a negative ' +
-    'anchor))</code>, plus a small riparian prior within 30 m of mapped water.</p>' +
-    '<p>Positive anchors: ' + meta.positives.join(', ') + '. Negative: ' + meta.negatives.join(', ') +
-    '. No training data and no per-region calibration, so scores are comparable within this ' +
-    'region but not against a separately fitted one.</p>' +
-    '<p>Tiles carry the value rather than a colour, so the palette and the filter are applied ' +
-    'in your browser and the clicked figure is the actual pixel. Areas are summed from a ' +
-    'full-resolution histogram weighted by latitude. The distribution is drawn on a log scale, ' +
-    'because the peak bin holds several hundred times the area of a settlement bin.</p>' +
-    (meta.post ? '<p><a href="' + meta.post + '" target="_blank" rel="noopener">' +
-      'Read the full write-up, including what the layer gets wrong</a>.</p>' : '') +
-    '<p class="muted">Build ' + BUILD + '. Sea is masked; lakes and rivers are kept. ' +
-    'The mapped area is clipped to Vancouver Island, the Gulf Islands and the ' +
-    'Sunshine Coast; the underlying raster covers more.</p>';
-  aboutLink.addEventListener('click', ev => {
-    ev.preventDefault();
-    aboutEl.hidden = !aboutEl.hidden;
-    aboutLink.textContent = aboutEl.hidden ? 'How it works' : 'Hide';
-  });
+  // "How it works" goes to the write-up rather than an inline panel. Set from
+  // meta.post so the URL lives in config and survives a rebuild.
+  const postLink = document.getElementById('post-link');
+  if (meta.post) postLink.href = meta.post;
+  else postLink.style.display = 'none';
+
 })();
 </script>
 </body>
